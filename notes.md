@@ -38,6 +38,8 @@ curl -i -H "Authorization: Bearer YOUR_JWT" -H "Accept: application/vnd.github.v
 
 To create an installation access token, include the JWT generated above in the Authorization header in the API request:
 
+(the webhook payload contains the installation ID)
+
 ```curl
 curl -i -X POST \
 -H "Authorization: Bearer YOUR_JWT" \
@@ -57,4 +59,13 @@ HTTP-based Git access by an installation
 
 Installations with permissions on contents of a repository, can use their installation access tokens to authenticate for Git access. Use the installation access token as the HTTP password:
 
-git clone https://x-access-token:<token>@github.com/owner/repo.git
+`git clone https://x-access-token:<token>@github.com/owner/repo.git`
+
+(This method is not suitable, as most stateless container engines use memory-based storage - $$$)
+
+Get repository content
+----------------------
+
+Gets the contents of a file or directory in a repository. Specify the file path or directory in :path. If you omit :path, you will receive the contents of all files in the repository.
+
+`GET /repos/:owner/:repo/contents/:path`
