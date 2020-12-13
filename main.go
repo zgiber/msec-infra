@@ -15,6 +15,10 @@ type server struct {
 	dc *datastore.Client
 }
 
+type request struct {
+	Request string
+}
+
 func main() {
 	projID := os.Getenv("DATASTORE_PROJECT_ID")
 	if projID == "" {
@@ -45,7 +49,7 @@ func (s *server) handleAllRequests(w http.ResponseWriter, r *http.Request) {
 		log.Println(err)
 	}
 
-	key, err := s.dc.Put(r.Context(), datastore.IncompleteKey("request", nil), string(rb))
+	key, err := s.dc.Put(r.Context(), datastore.IncompleteKey("request", nil), &request{string(rb)})
 	if err != nil {
 		log.Println(err)
 	}
