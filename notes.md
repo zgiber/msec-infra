@@ -50,4 +50,11 @@ Github webhook contains:
 - repo meta,
 - before, after sha256 hashes.
 
-Looks like a good idea to associate reports with sha256 hashes.
+(Looks like a good idea to associate reports with sha256 hashes.)
+
+HTTP-based Git access by an installation
+----------------------------------------
+
+Installations with permissions on contents of a repository, can use their installation access tokens to authenticate for Git access. Use the installation access token as the HTTP password:
+
+git clone https://x-access-token:<token>@github.com/owner/repo.git
