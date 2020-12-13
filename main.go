@@ -18,7 +18,7 @@ type server struct {
 
 type request struct {
 	ReceivedAt time.Time
-	Request    string
+	Request    string `datastore:",noindex"`
 }
 
 func main() {
