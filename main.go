@@ -101,7 +101,7 @@ func (s *server) handleAllRequests(w http.ResponseWriter, r *http.Request) {
 func getAccessToken(jwt string, installationID int) (string, error) {
 	url := fmt.Sprintf("https://api.github.com/app/installations/%v/access_tokens", installationID)
 	log.Print(url)
-	r, err := http.NewRequest(http.MethodGet, url, nil)
+	r, err := http.NewRequest(http.MethodPost, url, nil)
 	if err != nil {
 		return "", fmt.Errorf("failed to get access token: %w", err)
 	}
