@@ -44,3 +44,10 @@ curl -i -X POST \
 -H "Accept: application/vnd.github.machine-man-preview+json" \
 https://api.github.com/app/installations/:installation_id/access_tokens
 ```
+
+Github webhook contains:
+
+- repo meta,
+- before, after sha256 hashes.
+
+Looks like a good idea to associate reports with sha256 hashes.
