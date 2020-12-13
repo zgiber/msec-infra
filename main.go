@@ -7,17 +7,25 @@ import (
 	"io/ioutil"
 	"log"
 	"net/http"
-	"net/http/httputil"
 	"os"
+	"sync"
 	"time"
 
+	"cloud.google.com/go/datastore"
 	"github.com/dgrijalva/jwt-go"
+)
+
+const (
+	githubBaseAPI = "https://api.github.com"
 )
 
 // test server
 type server struct {
-	privateKey []byte
-	appID      string
+	l             sync.RWMutex
+	privateKey    []byte
+	appID         string
+	installations map[int]*installationAuth
+	datastore     *datastore.Client
 }
 
 type request struct {
@@ -26,6 +34,11 @@ type request struct {
 }
 
 func main() {
+	// projID := os.Getenv("DATASTORE_PROJECT_ID")
+	// if projID == "" {
+	// 	log.Fatal(`You need to set the environment variable "DATASTORE_PROJECT_ID"`)
+	// }
+
 	privateKeyB64 := os.Getenv("GITHUB_APP_PRIVATE_KEY")
 	if privateKeyB64 == "" {
 		log.Fatal(`You need to set the environment variable "GITHUB_APP_PRIVATE_KEY"`)
@@ -40,6 +53,7 @@ func main() {
 	if appID == "" {
 		log.Fatal(`You need to set the environment variable "GITHUB_APP_ID"`)
 	}
+
 	// [START datastore_build_service]
 	// ctx := context.Background()
 	// client, err := datastore.NewClient(ctx, projID)
@@ -49,8 +63,10 @@ func main() {
 	// }
 
 	srv := &server{
-		privateKey: privateKey,
-		appID:      appID,
+		privateKey:    privateKey,
+		appID:         appID,
+		installations: map[int]*installationAuth{},
+		// datastore:     client,
 	}
 
 	// catch all
@@ -68,71 +84,104 @@ func (s *server) handleAllRequests(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	now := time.Now().Unix()
-	claims := map[string]interface{}{
-		"iat": now,
-		"exp": now + 600,
-		"iss": s.appID,
-	}
-	jwt, err := createJWTString(claims, s.privateKey)
-	if err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
-		return
-	}
-	_, err = getAccessToken(jwt, webhook.Installation.ID)
+	token, err := s.getInstallationAuthToken(webhook.Installation.ID)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
 
-	log.Println(jwt)
-	// log.Println(string(rb))
-	// storedRequest := &request{
-	// ReceivedAt: time.Now().UTC(),
-	// Request:    string(rb),
-	// }
-
-	// key, err := s.dc.Put(r.Context(), datastore.IncompleteKey("request", nil), storedRequest)
-	// if err != nil {
-	// log.Println(err)
-	// }
+	contents, err := s.getRepositoryContent(token, webhook.Repository.Owner.Name, webhook.Repository.Name)
+	// testing stuff
+	w.Write(contents)
 }
 
-func getAccessToken(jwt string, installationID int) (string, error) {
+func (s *server) getRepositoryContent(token, owner, repo string) ([]byte, error) {
+	url := fmt.Sprintf("%s/repos/%s/%s/contents", githubBaseAPI, owner, repo)
+	r, err := http.NewRequest(http.MethodGet, url, nil)
+	if err != nil {
+		return nil, fmt.Errorf("failed to authenticate as Installation: %w", err)
+	}
+	r.Header.Set("Authorization", "Bearer "+token)
+	r.Header.Set("Accept", "application/vnd.github.machine-man-preview+json")
+	response, err := http.DefaultClient.Do(r)
+	if err != nil {
+		return nil, fmt.Errorf("failed to authenticate as Installation: %w", err)
+	}
+
+	// TODO: should we care about redirects?
+	if response.StatusCode/100 != 2 {
+		err := fmt.Errorf("remote error (%v)", response.StatusCode)
+		return nil, fmt.Errorf("failed to authenticate as Installation: %w", err)
+	}
+	defer response.Body.Close()
+	return ioutil.ReadAll(response.Body)
+}
+
+func (s *server) getInstallationAuthToken(installationID int) (string, error) {
+	now := time.Now().UTC()
+	s.l.RLock()
+	auth, ok := s.installations[installationID]
+	s.l.RUnlock()
+	if ok {
+		if auth.ExpiresAt.After(now.Add(10 * time.Second)) {
+			return auth.Token, nil
+		}
+	}
+
+	// claims required by Github
+	claims := map[string]interface{}{
+		"iat": now.Unix(),
+		"exp": now.Unix() + 600,
+		"iss": s.appID,
+	}
+
+	jwt, err := createJWTString(claims, s.privateKey)
+	if err != nil {
+		return "", err
+	}
+
+	// for accessing installation specific data (e.g. contents) we need to auth as the installation
+	auth, err = authAsInstallation(jwt, installationID)
+	if err != nil {
+		return "", err
+	}
+
+	s.l.Lock()
+	// keep it for a short while (until it expires)
+	s.installations[installationID] = auth
+	s.l.Unlock()
+	return auth.Token, nil
+}
+
+func authAsInstallation(jwt string, installationID int) (*installationAuth, error) {
 	url := fmt.Sprintf("https://api.github.com/app/installations/%v/access_tokens", installationID)
-	log.Print(url)
 	r, err := http.NewRequest(http.MethodPost, url, nil)
 	if err != nil {
-		return "", fmt.Errorf("failed to get access token: %w", err)
+		return nil, fmt.Errorf("failed to authenticate as Installation: %w", err)
 	}
 	r.Header.Set("Authorization", "Bearer "+jwt)
 	r.Header.Set("Accept", "application/vnd.github.machine-man-preview+json")
-
-	requestDump, _ := httputil.DumpRequest(r, true)
-	log.Print(string(requestDump))
-
 	response, err := http.DefaultClient.Do(r)
 	if err != nil {
-		return "", fmt.Errorf("failed to get access token: %w", err)
+		return nil, fmt.Errorf("failed to authenticate as Installation: %w", err)
 	}
 
+	// TODO: should we care about redirects?
 	if response.StatusCode/100 != 2 {
-		responseDump, _ := httputil.DumpResponse(response, true)
-		log.Print(string(responseDump))
-		return "", fmt.Errorf("remote error (%v)", response.StatusCode)
+		err := fmt.Errorf("remote error (%v)", response.StatusCode)
+		return nil, fmt.Errorf("failed to authenticate as Installation: %w", err)
 	}
-
 	defer response.Body.Close()
-
-	b, err := ioutil.ReadAll(response.Body)
+	auth := &installationAuth{}
+	err = json.NewDecoder(response.Body).Decode(auth)
 	if err != nil {
-		return "", fmt.Errorf("failed to get access token: %w", err)
+		return nil, fmt.Errorf("failed to authenticate as Installation: %w", err)
 	}
 
-	fmt.Printf("\n%s\n", string(b))
-	return "", nil
+	return auth, nil
 }
 
+// creates a JWT as a string signed with the private key for the Github app using RS256 alg.
 func createJWTString(claims map[string]interface{}, privateKey []byte) (string, error) {
 	token := jwt.NewWithClaims(jwt.SigningMethodRS256, jwt.MapClaims(claims))
 
@@ -147,6 +196,22 @@ func createJWTString(claims map[string]interface{}, privateKey []byte) (string, 
 		return "", err
 	}
 	return tokenString, nil
+}
+
+type installationAuth struct {
+	Token       string    `json:"token"`
+	ExpiresAt   time.Time `json:"expires_at"`
+	Permissions struct {
+		Actions              string `json:"actions"`
+		Checks               string `json:"checks"`
+		Contents             string `json:"contents"`
+		Metadata             string `json:"metadata"`
+		RepositoryHooks      string `json:"repository_hooks"`
+		SecretScanningAlerts string `json:"secret_scanning_alerts"`
+		SecurityEvents       string `json:"security_events"`
+		Statuses             string `json:"statuses"`
+	} `json:"permissions"`
+	RepositorySelection string `json:"repository_selection"`
 }
 
 // TODO: remove what's not necessary
