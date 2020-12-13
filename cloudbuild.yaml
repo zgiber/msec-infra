@@ -1,0 +1,16 @@
+steps:
+- name: 'gcr.io/cloud-builders/go'
+  args: ['build', '-o', 'server', './main.go']
+  env: ['PROJECT_ROOT=msec-infra']
+
+- name: 'gcr.io/cloud-builders/docker'
+  args: ['build',
+         '-t', 'gcr.io/$PROJECT_ID/$REPO_NAME:$COMMIT_SHA',
+         '-t', 'gcr.io/$PROJECT_ID/$REPO_NAME:latest',
+         '-f', 'Dockerfile.slim',
+         '.'
+  ]
+
+images:
+- 'gcr.io/$PROJECT_ID/$REPO_NAME:$COMMIT_SHA'
+- 'gcr.io/$PROJECT_ID/$REPO_NAME:latest'
