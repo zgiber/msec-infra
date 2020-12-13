@@ -1,4 +1,4 @@
 Infrastructure Security
 =======================
 
-Testing Github app integrations.
+Testing Github app integration.
