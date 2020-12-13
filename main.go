@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"net/http/httputil"
 	"os"
+	"time"
 
 	"cloud.google.com/go/datastore"
 )
@@ -16,7 +17,8 @@ type server struct {
 }
 
 type request struct {
-	Request string
+	ReceivedAt time.Time
+	Request    string
 }
 
 func main() {
@@ -49,7 +51,12 @@ func (s *server) handleAllRequests(w http.ResponseWriter, r *http.Request) {
 		log.Println(err)
 	}
 
-	key, err := s.dc.Put(r.Context(), datastore.IncompleteKey("request", nil), &request{string(rb)})
+	storedRequest := &request{
+		ReceivedAt: time.Now().UTC(),
+		Request:    string(rb),
+	}
+
+	key, err := s.dc.Put(r.Context(), datastore.IncompleteKey("request", nil), storedRequest)
 	if err != nil {
 		log.Println(err)
 	}
